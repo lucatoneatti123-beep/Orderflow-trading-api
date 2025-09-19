@@ -49,7 +49,7 @@ def _map_importance(raw_text: str):
     return "medium"
 
 @app.get("/calendar/news")
-async def calendar_news():
+async def calendar_news(min_importance: str = "medium", limit: int = 20):
     # cache povera ma utile
     now = time.time()
     if now - _NEWS_CACHE["ts"] < _CACHE_TTL and _NEWS_CACHE["data"]:
@@ -79,6 +79,12 @@ async def calendar_news():
         if ts and title:
             out.append({"ts": ts, "importance": imp, "title": title, "source": "FinancialJuice"})
 
+      # filtra per importanza e limita risultati
+    rank = {"low": 0, "medium": 1, "high": 2}
+    thr = rank.get((min_importance or "medium").lower(), 1)
+    out = [x for x in out if rank.get((x.get("importance") or "medium").lower(), 1) >= thr]
+    out = out[:max(1, min(100, int(limit)))]
+
     _NEWS_CACHE["ts"] = now
     _NEWS_CACHE["data"] = out
     return out
@@ -95,4 +101,5 @@ def opex(symbol: str = "NQ"):
 @app.get("/utils/ping")
 def ping():
     return {"status": "ok"}
+
 
