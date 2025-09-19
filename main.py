@@ -35,6 +35,7 @@ def gamma_state(symbol: str = "NQ", date_ref: str = str(date.today())):
 
 # --- NEWS: FinancialJuice via RSS ---
 FJ_RSS_URL = os.getenv("FJ_RSS_URL", "").strip()
+FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "").strip()
 _NEWS_CACHE = {"ts": 0, "data": []}
 _CACHE_TTL = 60  # secondi di cache per non martellare il feed
 
@@ -97,9 +98,58 @@ def opex(symbol: str = "NQ"):
         {"date": "2025-09-27", "kind": "weekly", "notes": "Weekly OPEX"}
     ]
 
+# --- ECON CALENDAR via Finnhub ---
+@app.get("/calendar/events")
+async def econ_events(
+    date: str,                      # formato YYYY-MM-DD
+    min_importance: str = "medium", # low | medium | high (soglia minima)
+    limit: int = 50,                # massimo risultati
+    country: str = ""               # opzionale, es. "US", "EU", "GB"
+):
+    if not FINNHUB_TOKEN:
+        return []
+
+    url = "https://finnhub.io/api/v1/calendar/economic"
+    params = {"from": date, "to": date, "token": FINNHUB_TOKEN}
+    if country:
+        params["country"] = country  # Finnhub accetta codici paese (es. US)
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        payload = r.json()
+
+    # Finnhub può restituire "economicCalendar" o "events" a seconda del piano/rota
+    rows = payload.get("economicCalendar") or payload.get("events") or []
+
+    # normalizziamo importanza e filtriamo
+    rank = {"low": 0, "medium": 1, "high": 2}
+    thr = rank.get((min_importance or "medium").lower(), 1)
+
+    out = []
+    for it in rows:
+        imp_raw = (it.get("importance") or it.get("impact") or "medium")
+        imp = str(imp_raw).lower()
+        if rank.get(imp, 1) < thr:
+            continue
+
+        out.append({
+            "date": it.get("date"),                                # YYYY-MM-DD
+            "time_utc": it.get("time") or it.get("date"),          # best effort
+            "title": it.get("event") or it.get("title"),
+            "country": it.get("country"),
+            "importance": imp,
+            "forecast": it.get("forecast"),
+            "previous": it.get("previous"),
+            "source": "Finnhub"
+        })
+
+    return out[:max(1, min(200, int(limit)))]
+
 # --- PING ---
 @app.get("/utils/ping")
 def ping():
     return {"status": "ok"}
+
 
 
