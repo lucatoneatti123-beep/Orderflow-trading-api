@@ -110,62 +110,6 @@ def _map_te_importance(x):
 @app.get("/calendar/events")
 async def econ_events(
     date: str,                      # YYYY-MM-DD
-    min_importance: str = "medium", # low | medium | high (soglia minima)
-    limit: int = 50,                # massimo risultati
-    country: str = ""               # opzionale: es. "United States", "Euro Area"
-):
-    if not TE_API_KEY:
-        return []
-
-    params = {
-        "c": TE_API_KEY,
-        "f": "json",
-        "initDate": date,
-        "endDate": date,
-    }
-    if country:
-        params["country"] = country  # TE usa nomi interi: "United States", "Euro Area", ecc.
-
-    async with httpx.AsyncClient(timeout=12) as client:
-        r = await client.get("https://api.tradingeconomics.com/calendar", params=params)
-        r.raise_for_status()
-        items = r.json()
-
-    rank = {"low": 0, "medium": 1, "high": 2}
-    thr = rank.get((min_importance or "medium").lower(), 1)
-
-    out = []
-    for it in items if isinstance(items, list) else []:
-        d = (it.get("Date") or "")[:10]  # "2025-09-23T08:45:00" -> "2025-09-23"
-        if d != date:
-            continue
-        imp = _map_te_importance(it.get("Importance"))
-        if rank.get(imp, 1) < thr:
-            continue
-        out.append({
-            "date": d,
-            "time_utc": it.get("Date"),
-            "title": it.get("Event"),
-            "country": it.get("Country"),
-            "importance": imp,
-            "forecast": it.get("Forecast"),
-            "previous": it.get("Previous"),
-            "source": "TradingEconomics"
-        })
-
-    return out[:max(1, min(200, int(limit)))]
-
-# --- ECON CALENDAR via TradingEconomics ---
-def _map_te_importance(x):
-    try:
-        n = int(x)  # TE: 0=low, 1=medium, 2=high
-    except:
-        return "medium"
-    return {0: "low", 1: "medium", 2: "high"}.get(n, "medium")
-
-@app.get("/calendar/events")
-async def econ_events(
-    date: str,                      # YYYY-MM-DD
     min_importance: str = "medium", # low | medium | high
     limit: int = 50,
     country: str = ""               # es. "United States", "Euro Area"
@@ -215,6 +159,7 @@ async def econ_events(
 @app.get("/utils/ping")
 def ping():
     return {"status": "ok"}
+
 
 
 
