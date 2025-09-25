@@ -99,7 +99,7 @@ def opex(symbol: str = "NQ"):
         {"date": "2025-09-27", "kind": "weekly", "notes": "Weekly OPEX"}
     ]
 
-# --- ECON CALENDAR via TradingEconomics ---
+# --- ECON CALENDAR via TradingEconomics (robusta) ---
 def _map_te_importance(x):
     try:
         n = int(x)  # TE: 0=low, 1=medium, 2=high
@@ -107,15 +107,28 @@ def _map_te_importance(x):
         return "medium"
     return {0: "low", 1: "medium", 2: "high"}.get(n, "medium")
 
+# mapping sigle → nomi TE
+_TE_COUNTRY_MAP = {
+    "US": "United States", "EU": "Euro Area", "GB": "United Kingdom",
+    "DE": "Germany", "FR": "France", "IT": "Italy", "ES": "Spain",
+    "CA": "Canada", "JP": "Japan", "CN": "China", "AU": "Australia",
+    "NZ": "New Zealand"
+}
+
 @app.get("/calendar/events")
 async def econ_events(
     date: str,                      # YYYY-MM-DD
     min_importance: str = "medium", # low | medium | high
     limit: int = 50,
-    country: str = ""               # es. "United States", "Euro Area"
+    country: str = ""               # accetta "US" o "United States" o "Euro Area"
 ):
     if not TE_API_KEY:
         return []
+
+    # normalizza paese
+    ctry = (country or "").strip()
+    if ctry.upper() in _TE_COUNTRY_MAP:
+        ctry = _TE_COUNTRY_MAP[ctry.upper()]
 
     params = {
         "c": TE_API_KEY,
@@ -123,20 +136,37 @@ async def econ_events(
         "initDate": date,
         "endDate": date,
     }
-    if country:
-        params["country"] = country  # TE usa nomi completi
+    if ctry:
+        params["country"] = ctry
 
     async with httpx.AsyncClient(timeout=12) as client:
-        r = await client.get("https://api.tradingeconomics.com/calendar", params=params)
-        r.raise_for_status()
-        items = r.json()
+        # 1) prova con le date
+        try:
+            r = await client.get("https://api.tradingeconomics.com/calendar", params=params)
+            r.raise_for_status()
+            items = r.json()
+        except httpx.HTTPError:
+            items = []
+
+        # 2) fallback: senza date, poi filtro lato server
+        if not isinstance(items, list) or not items:
+            try:
+                p2 = {"c": TE_API_KEY, "f": "json"}
+                if ctry:
+                    p2["country"] = ctry
+                r2 = await client.get("https://api.tradingeconomics.com/calendar", params=p2)
+                r2.raise_for_status()
+                items = r2.json() if isinstance(r2.json(), list) else []
+                items = [it for it in items if (it.get("Date") or "")[:10] == date]
+            except httpx.HTTPError:
+                items = []
 
     rank = {"low": 0, "medium": 1, "high": 2}
     thr = rank.get((min_importance or "medium").lower(), 1)
 
     out = []
-    for it in items if isinstance(items, list) else []:
-        d = (it.get("Date") or "")[:10]  # "2025-09-23T08:45:00" -> "2025-09-23"
+    for it in items:
+        d = (it.get("Date") or "")[:10]
         if d != date:
             continue
         imp = _map_te_importance(it.get("Importance"))
@@ -159,6 +189,7 @@ async def econ_events(
 @app.get("/utils/ping")
 def ping():
     return {"status": "ok"}
+
 
 
 
